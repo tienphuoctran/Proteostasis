@@ -1,0 +1,59 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+```{r Load the data}
+TUBE_WTveh_vs_KOveh <- read_csv("Datasets/180205.TUBE WTveh vs KOveh.csv", 
+    na = "NA") %>%
+  mutate("log2.ratio(KO_veh/WT_veh)" = `log2.ratio`) %>%
+  mutate("p.value.(KO_veh/WT_veh)" = `p.value`) %>%
+  select("Protein IDs", "Gene names", 2:31, "log2.ratio(KO_veh/WT_veh)", "p.value.(KO_veh/WT_veh)")
+
+TUBE_KOveh_vs_KOMG <- read_csv("Datasets/180205.TUBE KOveh vs KOMG.csv", na = "NA") %>% 
+  mutate("log2.ratio(KO_MG132/KO_veh)" = `log2.ratio`) %>%
+  mutate("p.value.(KO_MG132/KO_veh)" = `p.value`) %>%
+  select("Protein IDs","log2.ratio(KO_MG132/KO_veh)", "p.value.(KO_MG132/KO_veh)")
+
+TUBE_WTveh_vs_WTMG <- read_csv("Datasets/180205.TUBE WTveh vs WTMG.csv", 
+    na = "NA")  %>% 
+  mutate("log2.ratio(WT_MG132/WT_veh)" = `log2.ratio`) %>%
+  mutate("p.value.(WT_MG132/WT_veh)" = `p.value`) %>%
+  select("Protein IDs","log2.ratio(WT_MG132/WT_veh)", "p.value.(WT_MG132/WT_veh)")
+
+Combined_TUBE <- Reduce(function(x, y) merge(x, y, by="Protein IDs", all=TRUE),
+                            list(TUBE_WTveh_vs_KOveh, TUBE_WTveh_vs_WTMG, TUBE_KOveh_vs_KOMG))
+```
+```{r Filtering}
+## Filter
+## Interpretation 1: At steady state, if there's more ubiquitinated proteins in KO genotype, that means that they are less targeted for degradation in the KO condition. and Vice Versa Do I agree with this?
+
+## Interpretation 2: Alternative interpretation is that more ubiquitinated proteins in KO condition means that there are more proteins marked for degradation. 
+
+##How do we disentangle this. We can 1) make use of MG132. Ubiquitinated proteins whose abundances increase with MG132, mean that they are a target of degradation that is now blocked by MG132. All proteins are likely to increase with MG132 treatment, but I think we are interested in the relative differences between WT and KO condition. If the proteins increase with MG132 in KO way more than WT, than they are considered excessively degraded. These proteins fit into scenario 1
+
+## Let's focus on Interpretation/Scenario 1: 
+##
+
+Combined_TUBE_stats_only <- Combined_TUBE %>% select(1, 2, 33:38 )
+Scenario1_Excessively_Degraded <- Combined_TUBE_stats_only %>% 
+  filter(log2.ratio(KO_veh/WT_veh) < 0 & p.value.(KO_veh/WT_veh) <= 0.05) %>% # Less abundance of ubiquitinated protein KO 
+  filter(log2.ratio(KO_veh/WT_veh) < 0 & p.value.(KO_veh/WT_veh) <= 0.05) %>% 
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
