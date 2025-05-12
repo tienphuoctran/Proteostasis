@@ -1,0 +1,316 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(ggrepel)
+library(DEP)
+```
+
+```{r Functions}
+parse_protein_ids <- function(ids) {
+  # Check if input is a vector
+  if (!is.vector(ids)) {
+    stop("Input must be a vector")
+  }
+  
+  # Split IDs on semicolon and unlist to create a single vector
+  parsed_ids <- unlist(strsplit(ids, split = ";"))
+  
+  # Remove any whitespace
+  parsed_ids <- trimws(parsed_ids)
+  
+  # Remove any empty strings
+  parsed_ids <- parsed_ids[parsed_ids != ""]
+  
+  # Remove duplicates while maintaining order
+  parsed_ids <- unique(parsed_ids)
+  
+  return(parsed_ids)
+}
+```
+
+```{r Load the data}
+TUBE_WT_veh_vs_KO_veh <- read_csv("Datasets/180205.TUBE WTveh vs KOveh.csv", 
+    na = "NA") %>%
+  mutate("log2.ratio_WT_veh_vs_KO_veh" = `log2.ratio`) %>%
+  mutate("p.value_WT_veh_vs_KO_veh" = `p.value`) %>%
+  select("Protein IDs", "Gene names", 2:31, "log2.ratio_WT_veh_vs_KO_veh", "p.value_WT_veh_vs_KO_veh")
+
+TUBE_KO_veh_vs_KO_MG132 <- read_csv("Datasets/180205.TUBE KOveh vs KOMG.csv", na = "NA") %>% 
+  mutate("log2.ratio_KO_veh_vs_KO_MG132" = `log2.ratio`) %>%
+  mutate("p.value_KO_veh_vs_KO_MG132" = `p.value`) %>%
+  select("Protein IDs","log2.ratio_KO_veh_vs_KO_MG132", "p.value_KO_veh_vs_KO_MG132")
+
+TUBE_WT_veh_vs_WT_MG132 <- read_csv("Datasets/180205.TUBE WTveh vs WTMG.csv", 
+    na = "NA")  %>% 
+  mutate("log2.ratio_WT_veh_vs_WT_MG132" = `log2.ratio`) %>%
+  mutate("p.value_WT_veh_vs_WT_MG132" = `p.value`) %>%
+  select("Protein IDs","log2.ratio_WT_veh_vs_WT_MG132", "p.value_WT_veh_vs_WT_MG132")
+
+Combined_TUBE <- Reduce(function(x, y) merge(x, y, by="Protein IDs", all=TRUE),
+                            list(TUBE_WT_veh_vs_KO_veh, TUBE_WT_veh_vs_WT_MG132, TUBE_KO_veh_vs_KO_MG132))
+```
+```{r Filtering}
+## Filter
+## Interpretation 1: At steady state, if there's more ubiquitinated proteins in KO genotype, that means that they are less targeted for degradation in the KO condition. and Vice Versa Do I agree with this?
+
+## Interpretation 2: Alternative interpretation is that more ubiquitinated proteins in KO condition means that there are more proteins marked for degradation. 
+
+##How do we disentangle this. We can 1) make use of MG132. Ubiquitinated proteins whose abundances increase with MG132, mean that they are a target of degradation that is now blocked by MG132. These proteins fit into scenario 1
+
+## All proteins are likely to increase with MG132 treatment, but I think we are interested in the relative differences between WT and KO condition. If the proteins increase with MG132 in KO way more than WT, than they are considered excessively degraded. These proteins fit into scenario 1*. But we currently don't have the stat test of these data. 
+
+## Let's focus on Interpretation/Scenario 1: 
+## These are proteins excessively degraded in KO genotype
+
+Combined_TUBE_stats_only <- Combined_TUBE %>% select(1, 2, 33:38 )
+Scenario1_Excessively_Degraded_in_KO <- Combined_TUBE_stats_only %>% 
+  filter(`log2.ratio_WT_veh_vs_KO_veh` < 0 & `p.value_WT_veh_vs_KO_veh` <= 0.1) %>% # Less abundance of ubiquitinated protein KO 
+  filter(`log2.ratio_KO_veh_vs_KO_MG132` > 0 & `p.value_KO_veh_vs_KO_MG132` <= 0.1) # More abundant after MG132 treatment in KO
+  
+## I also want to see how these proteins behave when WT mice is treated with MG132
+# First, let's check the full range of your data
+# First, let's create two separate data frames for plotting order control
+# First, let's create two separate data frames for plotting order control
+other_proteins <- Combined_TUBE_stats_only %>%
+  filter(!(`Protein IDs` %in% Scenario1_Excessively_Degraded_in_KO$`Protein IDs`))
+
+degraded_proteins <- Combined_TUBE_stats_only %>%
+  filter(`Protein IDs` %in% Scenario1_Excessively_Degraded_in_KO$`Protein IDs`)
+
+# Now create the plot with controlled order and correct interpretations
+WT_KO_Veh_MG132 <- ggplot() +
+  # Add x=0 and y=0 reference lines (subtle and semi-transparent)
+  geom_hline(yintercept = 0, linetype = "solid", color = "gray60", alpha = 0.6, size = 0.5) +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray60", alpha = 0.6, size = 0.5) +
+  
+  # Add x=y diagonal line (dotted and subtle)
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "gray50", 
+              alpha = 0.7, size = 0.5) +
+  
+  # Background points first (other proteins)
+  geom_point(data = other_proteins,
+             aes(x = log2.ratio_WT_veh_vs_WT_MG132, 
+                 y = log2.ratio_KO_veh_vs_KO_MG132),
+             color = "gray70", alpha = 0.5, size = 1.8) +
+  
+  # Highlighted points on top (degraded proteins)
+  geom_point(data = degraded_proteins,
+             aes(x = log2.ratio_WT_veh_vs_WT_MG132, 
+                 y = log2.ratio_KO_veh_vs_KO_MG132),
+             color = "#D81B60", alpha = 0.9, size = 2.2) +
+  
+  # Add labels for the highlighted proteins
+  geom_text_repel(data = filtered_scenario,
+                  aes(x = log2.ratio_WT_veh_vs_WT_MG132, 
+                      y = log2.ratio_KO_veh_vs_KO_MG132,
+                      label = `Gene names`), 
+                  size = 3.5,
+                  fontface = "bold",
+                  color = "#1E88E5",
+                  bg.color = "white",
+                  bg.r = 0.15,
+                  box.padding = 1,
+                  force = 1,
+                  max.overlaps = Inf) + 
+                  
+  # Set limits
+  scale_x_continuous(limits = c(-6, 6)) +
+  scale_y_continuous(limits = c(-6, 6)) +
+  
+  # Equal aspect ratio
+  coord_fixed(ratio = 1) +
+  
+  # Clean theme
+  theme_classic() +
+  
+  # CORRECTED quadrant annotations
+  annotate("text", x = -5.5, y = 5.5, 
+           label = "Less ubiquitinated in WT\nMore in KO after MG132", 
+           size = 3, color = "gray40", hjust = 0) +
+  annotate("text", x = 5.5, y = 5.5, 
+           label = "More ubiquitinated in both\nafter MG132", 
+           size = 3, color = "gray40", hjust = 1) +
+  annotate("text", x = -5.5, y = -5.5, 
+           label = "Less ubiquitinated in both\nafter MG132", 
+           size = 3, color = "gray40", hjust = 0) +
+  annotate("text", x = 5.5, y = -5.5, 
+           label = "More ubiquitinated in WT\nLess in KO after MG132", 
+           size = 3, color = "gray40", hjust = 1) +
+  
+  # Corrected axis labels and titles
+  labs(
+    title = "Effect of MG132 on Protein Ubiquitination in WT vs KO",
+    subtitle = "Highlighted proteins are excessively degraded in KO",
+    x = "log2(MG132/Vehicle) in WT",
+    y = "log2(MG132/Vehicle) in KO"
+  ) +
+  
+  # Custom theme elements
+  theme(
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    plot.subtitle = element_text(hjust = 0.5, color = "gray40", size = 10),
+    panel.grid = element_blank()
+  )
+
+# Print the plot
+print(WT_KO_Veh_MG132)
+```
+
+```{r DEP }
+# Extract relevant columns from Combined_TUBE
+selected_columns <- Combined_TUBE %>%
+  select(
+    "Protein IDs",
+    "imp.TUBE.WT-Drug-2-1",
+    "imp.TUBE.WT-Drug-2-2",
+    "imp.TUBE.WT-Drug-2-3",
+    "imp.TUBE.KO-Drug-2-1",
+    "imp.TUBE.KO-Drug-2-2",
+    "imp.TUBE.KO-Drug-2-3"
+  )
+
+selected_columns <- selected_columns %>%
+  mutate(
+    across(starts_with("imp."), ~ifelse(. == 0, NA, .))
+  )
+
+# Create a new data frame for DEP analysis
+# First, convert from log10 to linear scale, as DEP will perform log2 transformation
+dep_df <- selected_columns %>%
+  mutate(
+    across(starts_with("imp."), ~10^.),  # Convert from log10 to linear scale
+  )
+
+# Rename columns to DEP format
+colnames(dep_df) <- c(
+  "Accession",
+  "Sample.WT.Rep1",
+  "Sample.WT.Rep2",
+  "Sample.WT.Rep3",
+  "Sample.KO.Rep1",
+  "Sample.KO.Rep2",
+  "Sample.KO.Rep3"
+)
+
+# Check for contaminant proteins (those with "CON__" in their IDs)
+contaminant_rows <- grepl("CON__", dep_df$Accession)
+cat("Number of contaminant proteins found:", sum(contaminant_rows), "\n")
+
+# Remove contaminant proteins
+dep_df_filtered <- dep_df %>%
+  filter(!grepl("CON__", Accession))
+
+
+# Make protein IDs unique for DEP
+data_unique <- make_unique(dep_df_filtered, "Accession", "Accession")
+
+# Create the SummarizedExperiment object
+# Using the parse function to split sample names by ".Rep"
+data_se <- make_se_parse(data_unique, 
+                         columns = 2:7,  # All sample columns
+                         mode = "delim", 
+                         sep = ".Rep")
+
+
+# Plot distribution of protein abundances
+# This visualizes the data before and after log2 transformation that DEP performs
+p_norm <- plot_normalization(data_se)
+print(p_norm)
+
+# Perform differential expression analysis using limma
+# Using "all" contrasts to get all possible comparisons
+data_diff <- test_diff(data_se, type = "all")
+
+# Add rejection information with desired parameters
+# alpha = 0.1 for FDR cutoff, lfc = 0 for no log fold change threshold
+dep <- add_rejections(data_diff, alpha = 0.1, lfc = log2(1))  # log2(1) = 0
+
+# Get wide format results for further analysis and custom p-value adjustment
+df_wide <- get_df_wide(dep)
+
+# Plot histogram of p-values to check distribution
+p_hist <- ggplot(df_wide, aes(x = WT_vs_KO_p.val)) + 
+  geom_histogram(binwidth = 0.05) +
+  labs(title = "Distribution of p-values for WT vs KO comparison",
+       x = "p-value",
+       y = "Count") +
+  theme_classic()
+print(p_hist)
+plot_volcano(dep, contrast = "WT_vs_KO", adjusted = FALSE)
+
+
+# Create volcano plot
+volcano_plot <- ggplot(df_wide_BH, aes(x = WT_vs_KO_diff, y = -log10(WT_vs_KO_p.val), color = significant)) +
+  geom_point(alpha = 0.7) +
+  scale_color_manual(values = c("grey60", "#D81B60")) +
+  labs(
+    title = "WT-MG132 vs KO-MG132 Comparison",
+    x = "log2 Fold Change (WT/KO)",
+    y = "-log10(p-value)"
+  ) +
+  theme_classic() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "gray40")
+print(volcano_plot)
+
+# Get significant proteins (adjusted p-value <= 0.1)
+significant_proteins <- df_wide_BH %>%
+  filter(WT_vs_KO_BH <= 0.1) %>%
+  arrange(WT_vs_KO_BH)
+
+# Print number of significant proteins
+cat("Number of significant proteins:", nrow(significant_proteins), "\n")
+
+# Create results table with fold changes and p-values
+results_table <- df_wide_BH %>%
+  select(name, WT_vs_KO_diff, WT_vs_KO_p.val, WT_vs_KO_BH, significant) %>%
+  rename(
+    Protein = name,
+    log2FC = WT_vs_KO_diff,
+    pvalue = WT_vs_KO_p.val,
+    adj_pvalue = WT_vs_KO_BH
+  ) %>%
+  arrange(adj_pvalue)
+
+# Save results to file if needed
+# write.csv(results_table, "WT_vs_KO_MG132_DEP_results.csv", row.names = FALSE)
+
+# Optional: Merge with original Gene names for better annotation
+if ("Gene names" %in% colnames(Combined_TUBE)) {
+  # Create mapping from Protein IDs to Gene names
+  gene_mapping <- Combined_TUBE %>%
+    select(`Protein IDs`, `Gene names`) %>%
+    distinct()
+  
+  # Join with results
+  results_table_with_genes <- results_table %>%
+    left_join(gene_mapping, by = c("Protein" = "Protein IDs"))
+  
+  # Reorder columns
+  results_table_with_genes <- results_table_with_genes %>%
+    select(`Gene names`, everything())
+  
+  # Print top significant proteins with gene names
+  head(results_table_with_genes, 20)
+}
+```
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
